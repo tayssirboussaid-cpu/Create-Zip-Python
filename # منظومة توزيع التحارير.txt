@@ -1,0 +1,7 @@
+# منظومة توزيع التحارير
+
+## المتطلبات
+- Python 3.9 أو أحدث
+- تثبيت المكتبات:
+  ```bash
+  pip install -r requirements.txt

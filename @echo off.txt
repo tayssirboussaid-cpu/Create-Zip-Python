@@ -1,0 +1,4 @@
+@echo off
+echo Starting Report Distribution System...
+python app.py
+pause

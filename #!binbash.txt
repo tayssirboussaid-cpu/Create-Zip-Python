@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "Starting Report Distribution System..."
+python3 app.py
