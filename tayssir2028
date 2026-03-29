@@ -1,0 +1,207 @@
+import os
+import zipfile
+import shutil
+
+folder_name = "ReportDistributionSystem"
+zip_name = folder_name + ".zip"
+
+# حذف مجلد موجود مسبقًا
+if os.path.exists(folder_name):
+    shutil.rmtree(folder_name)
+os.makedirs(os.path.join(folder_name, "uploads"), exist_ok=True)
+
+# ملفات النظام
+files_content = {
+    "app.py": """
+import os
+from flask import Flask, request, redirect, url_for, render_template_string, send_from_directory, flash, session
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.utils import secure_filename
+
+BASE_DIR = os.getcwd()
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+DB_PATH = os.path.join(BASE_DIR, 'reports.db')
+ALLOWED_EXT = {'png','jpg','jpeg','pdf'}
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'dev-secret-key'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///{}'.format(DB_PATH)
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+db = SQLAlchemy(app)
+USERS = {'admin':'12345'}
+
+@app.route('/login', methods=['GET','POST'])
+def login():
+    if request.method=='POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if username in USERS and USERS[username]==password:
+            session['user']=username
+            flash('تم تسجيل الدخول بنجاح')
+            return redirect(url_for('index'))
+        else:
+            flash('اسم المستخدم أو كلمة السر غير صحيحة')
+            return redirect(url_for('login'))
+    return render_template_string(BASE_HTML + \"\"\"
+    {% block content %}
+      <h2>تسجيل الدخول</h2>
+      <form method="post">
+        <label>اسم المستخدم:</label><input name="username"><br>
+        <label>كلمة السر:</label><input type="password" name="password"><br>
+        <button type="submit">دخول</button>
+      </form>
+    {% endblock %}
+    \"\"\")
+
+@app.before_request
+def require_login():
+    if request.endpoint not in ['login','uploaded_file','static'] and 'user' not in session:
+        return redirect(url_for('login'))
+
+# ----- Models -----
+class Center(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    ministry = db.Column(db.String(200))
+    administration = db.Column(db.String(200))
+    center_name = db.Column(db.String(200))
+    city = db.Column(db.String(100))
+    state = db.Column(db.String(100))
+    director = db.Column(db.String(200))
+    exam_date = db.Column(db.String(50))
+    logo_filename = db.Column(db.String(255))
+
+class Stream(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), unique=True)
+    name = db.Column(db.String(200))
+
+class Subject(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    stream_id = db.Column(db.Integer, db.ForeignKey('stream.id'))
+    name = db.Column(db.String(200))
+    stream = db.relationship('Stream', backref='subjects')
+
+class Institute(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200))
+
+class Teacher(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200))
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'), nullable=True)
+    max_reports = db.Column(db.Integer, default=100)
+    subject = db.relationship('Subject', backref='teachers')
+
+class Series(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    series_number = db.Column(db.String(50))
+    reports_count = db.Column(db.Integer)
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'))
+    subject = db.relationship('Subject', backref='series')
+
+class Report(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    candidate_name = db.Column(db.String(200))
+    registration_no = db.Column(db.String(100))
+    subject_id = db.Column(db.Integer, db.ForeignKey('subject.id'))
+    file_name = db.Column(db.String(255))
+    series_id = db.Column(db.Integer, db.ForeignKey('series.id'), nullable=True)
+    subject = db.relationship('Subject')
+    series = db.relationship('Series')
+
+class Assignment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey('report.id'))
+    teacher_id = db.Column(db.Integer, db.ForeignKey('teacher.id'))
+    status = db.Column(db.String(50), default='assigned')
+    grade = db.Column(db.Float, nullable=True)
+    session = db.Column(db.String(50), default='main')
+    report = db.relationship('Report')
+    teacher = db.relationship('Teacher')
+
+class Accounting(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    teacher_id = db.Column(db.Integer, db.ForeignKey('teacher.id'))
+    reports_count = db.Column(db.Integer)
+    price_per_report = db.Column(db.Float)
+    amount = db.Column(db.Float)
+    session = db.Column(db.String(50))
+    teacher = db.relationship('Teacher')
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.',1)[1].lower() in ALLOWED_EXT
+
+@app.before_request
+def setup_defaults():
+    db.create_all()
+    if Stream.query.count()==0:
+        streams = [
+            ('literature','الآداب'),
+            ('mathematics','الرياضيات'),
+            ('experimental_sciences','العلوم التجريبية'),
+            ('economics','الاقتصاد والتصرف'),
+            ('technical_sciences','العلوم التقنية'),
+            ('informatics','علوم الإعلامية'),
+            ('sports','الرياضة')
+        ]
+        for code,name in streams:
+            db.session.add(Stream(code=code,name=name))
+        db.session.commit()
+
+BASE_HTML = \"\"\"<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><title>منظومة توزيع التحارير</title>
+<style>
+body{font-family: Arial; padding:20px;} nav button{margin:4px}
+table{border-collapse:collapse;width:100%} table, th, td{border:1px solid #ccc} th, td{padding:6px}
+</style>
+</head>
+<body>
+<h1>منظومة توزيع التحارير</h1>
+<nav>
+<button onclick="location.href='/'">الرئيسية</button>
+<button onclick="location.href='/file'">ملف</button>
+<button onclick="location.href='/general'">المعطيات العامة</button>
+<button onclick="location.href='/series'">إدارة السلاسل</button>
+<button onclick="location.href='/distribution'">توزيع التحارير</button>
+<button onclick="location.href='/accounting'">المحاسبة</button>
+<button onclick="location.href='/print'">طباعة الوثائق</button>
+</nav>
+<hr />
+{% with messages = get_flashed_messages() %}{% if messages %}<ul>{% for m in messages %}<li>{{m}}</li>{% endfor %}</ul>{% endif %}{% endwith %}
+{% block content %}{% endblock %}
+</body>
+</html>\"\"\"
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+if __name__=='__main__':
+    app.run(debug=True)
+""",
+    "requirements.txt": "flask\nflask_sqlalchemy\nwerkzeug\n",
+    "run.bat": "@echo off\necho Starting Report Distribution System...\npython app.py\npause\n",
+    "run.sh": "#!/bin/bash\necho Starting Report Distribution System...\npython3 app.py\n",
+    "README.md": "# منظومة توزيع التحارير\nWindows: run.bat\nLinux/Mac: ./run.sh\nhttp://127.0.0.1:5000\n"
+}
+
+# إنشاء الملفات داخل المجلد
+for fname, content in files_content.items():
+    with open(os.path.join(folder_name,fname), "w", encoding="utf-8") as f:
+        f.write(content)
+
+# إنشاء ZIP
+with zipfile.ZipFile(zip_name,'w', zipfile.ZIP_DEFLATED) as zipf:
+    for root, dirs, files in os.walk(folder_name):
+        for file in files:
+            full_path = os.path.join(root, file)
+            arcname = os.path.relpath(full_path, folder_name)
+            zipf.write(full_path, os.path.join(folder_name, arcname))
+
+print(f"تم إنشاء الملف المضغوط النهائي الجاهز للتشغيل: {zip_name}")
